@@ -1,12 +1,6 @@
 import { useState, useCallback } from 'react';
-import {
-  StyleSheet,
-  View,
-  ScrollView,
-  Pressable,
-  ActivityIndicator,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { View, Text, ScrollView, Pressable } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -14,16 +8,19 @@ import Animated, {
   withRepeat,
   withTiming,
   cancelAnimation,
+  FadeIn,
+  FadeOut,
 } from 'react-native-reanimated';
+import { Mic, Square, X } from 'lucide-react-native';
 
-import { Mic, Square } from 'lucide-react-native';
-
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
+import { GlassHeader, useTabBarHeight } from '@/components/ui/glass-header';
+import { TranscriptCard } from '@/components/transcript-card';
+import { EmptyState } from '@/components/ui/empty-state';
+import { SkeletonCard } from '@/components/ui/skeleton';
 import { useAudioRecording, formatDuration, normalizeMetering } from '@/services/audio-service';
 import { GeminiService, getDemoTranscription } from '@/services/gemini-service';
-import { useAuth } from '@/contexts/auth-context';
-import { Colors, Spacing, BorderRadius } from '@/constants/theme';
+import { useApiKeyStore } from '@/stores/api-key-store';
+import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 interface TranscriptEntry {
@@ -35,7 +32,9 @@ interface TranscriptEntry {
 export default function LiveTranscriptionScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
-  const { isDemoMode, apiKey } = useAuth();
+  const insets = useSafeAreaInsets();
+  const tabBarHeight = useTabBarHeight();
+  const { isDemoMode, apiKey } = useApiKeyStore();
 
   const {
     recordingState,
@@ -47,7 +46,6 @@ export default function LiveTranscriptionScreen() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Animation values
   const recordingScale = useSharedValue(1);
   const pulseOpacity = useSharedValue(0.3);
 
@@ -64,7 +62,6 @@ export default function LiveTranscriptionScreen() {
       setError(null);
       await startRecording();
 
-      // Start pulse animation
       pulseOpacity.value = withRepeat(
         withTiming(0.8, { duration: 1000 }),
         -1,
@@ -80,7 +77,6 @@ export default function LiveTranscriptionScreen() {
     try {
       setIsProcessing(true);
 
-      // Stop animations
       cancelAnimation(pulseOpacity);
       pulseOpacity.value = withTiming(0.3);
       recordingScale.value = withSpring(1);
@@ -94,7 +90,6 @@ export default function LiveTranscriptionScreen() {
       let transcription;
 
       if (isDemoMode) {
-        // Simulate processing delay in demo mode
         await new Promise(resolve => setTimeout(resolve, 1500));
         transcription = getDemoTranscription();
       } else if (apiKey) {
@@ -118,99 +113,124 @@ export default function LiveTranscriptionScreen() {
     }
   }, [stopRecording, isDemoMode, apiKey, pulseOpacity, recordingScale]);
 
+  const handleDeleteTranscript = useCallback((id: string) => {
+    setTranscripts(prev => prev.filter(t => t.id !== id));
+  }, []);
+
+  const handleDismissError = useCallback(() => {
+    setError(null);
+  }, []);
+
   const metering = normalizeMetering(recordingState.metering);
+  const headerHeight = insets.top + 60;
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <ThemedView style={styles.header}>
-        <ThemedText type="title" style={styles.title}>Live</ThemedText>
-        {isDemoMode && (
-          <View style={[styles.demoBadge, { backgroundColor: colors.muted }]}>
-            <ThemedText style={[styles.demoText, { color: colors.mutedForeground }]}>
-              Demo
-            </ThemedText>
-          </View>
-        )}
-      </ThemedView>
+    <View className="flex-1 bg-background">
+      <GlassHeader
+        title="Live"
+        rightElement={
+          isDemoMode ? (
+            <View className="px-2 py-1 rounded-sm bg-muted">
+              <Text className="text-xs font-medium text-muted-foreground">Demo</Text>
+            </View>
+          ) : null
+        }
+      />
 
       <ScrollView
-        style={styles.transcriptContainer}
-        contentContainerStyle={styles.transcriptContent}
+        className="flex-1"
+        contentContainerStyle={{
+          paddingHorizontal: 24,
+          paddingTop: headerHeight + 16,
+          paddingBottom: tabBarHeight + 120,
+          gap: 16,
+          ...(transcripts.length === 0 && !isProcessing && !error ? { flex: 1 } : {}),
+        }}
       >
-        {isProcessing && (
-          <View style={[styles.processingCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <ActivityIndicator color={colors.primary} size="small" />
-            <ThemedText style={[styles.processingText, { color: colors.mutedForeground }]}>
-              Transcribing...
-            </ThemedText>
-          </View>
+        {error && (
+          <Animated.View
+            entering={FadeIn.duration(200)}
+            exiting={FadeOut.duration(200)}
+            className="flex-row items-center justify-between p-4 rounded-lg bg-destructive/15"
+          >
+            <Text className="text-sm text-destructive flex-1 mr-2">{error}</Text>
+            <Pressable onPress={handleDismissError} hitSlop={8}>
+              <X size={18} color={colors.destructive} />
+            </Pressable>
+          </Animated.View>
         )}
 
-        {error && (
-          <View style={[styles.errorCard, { backgroundColor: colors.destructive + '15' }]}>
-            <ThemedText style={[styles.errorText, { color: colors.destructive }]}>
-              {error}
-            </ThemedText>
-          </View>
-        )}
+        {isProcessing && <SkeletonCard hasHeader lines={2} />}
 
         {transcripts.length === 0 && !isProcessing && !error && (
-          <View style={styles.emptyState}>
-            <ThemedText style={[styles.emptyText, { color: colors.mutedForeground }]}>
-              Tap the record button to start transcribing
-            </ThemedText>
-          </View>
+          <EmptyState
+            icon="mic"
+            title="No transcripts yet"
+            description="Tap the record button below to start transcribing your voice in real-time"
+          />
         )}
 
-        {transcripts.map((entry) => (
-          <View
+        {transcripts.map((entry, index) => (
+          <TranscriptCard
             key={entry.id}
-            style={[styles.transcriptCard, { backgroundColor: colors.card, borderColor: colors.border }]}
-          >
-            <ThemedText style={styles.transcriptText}>{entry.text}</ThemedText>
-            <ThemedText style={[styles.timestamp, { color: colors.mutedForeground }]}>
-              {entry.timestamp.toLocaleTimeString()}
-            </ThemedText>
-          </View>
+            id={entry.id}
+            text={entry.text}
+            timestamp={entry.timestamp}
+            onDelete={handleDeleteTranscript}
+            index={index}
+          />
         ))}
       </ScrollView>
 
-      <View style={styles.controlsContainer}>
+      <View
+        className="absolute left-0 right-0 items-center py-6 px-6 gap-4"
+        style={{ bottom: tabBarHeight }}
+      >
         {recordingState.isRecording && (
-          <View style={styles.durationContainer}>
-            <View style={[styles.meteringBar, { backgroundColor: colors.muted }]}>
+          <Animated.View
+            entering={FadeIn.duration(200)}
+            className="items-center gap-2 w-full"
+          >
+            <View className="w-[60%] h-1 rounded-sm bg-muted overflow-hidden">
               <Animated.View
-                style={[
-                  styles.meteringFill,
-                  {
-                    backgroundColor: colors.primary,
-                    width: `${metering * 100}%`,
-                  },
-                ]}
+                className="h-full rounded-sm bg-primary"
+                style={{ width: `${metering * 100}%` }}
               />
             </View>
-            <ThemedText style={[styles.duration, { color: colors.mutedForeground }]}>
+            <Text className="text-sm text-muted-foreground tabular-nums">
               {formatDuration(recordingState.duration)}
-            </ThemedText>
-          </View>
+            </Text>
+          </Animated.View>
         )}
 
         <Pressable
           onPress={recordingState.isRecording ? handleStopRecording : handleStartRecording}
           disabled={isProcessing}
+          style={isProcessing ? { opacity: 0.5 } : undefined}
         >
-          <View style={styles.recordButtonContainer}>
+          <View className="items-center justify-center">
             <Animated.View
               style={[
-                styles.recordButtonPulse,
-                { backgroundColor: colors.primary },
+                {
+                  position: 'absolute',
+                  width: 88,
+                  height: 88,
+                  borderRadius: 44,
+                  backgroundColor: colors.primary,
+                },
                 animatedPulseStyle,
               ]}
             />
             <Animated.View
               style={[
-                styles.recordButton,
-                { backgroundColor: recordingState.isRecording ? colors.destructive : colors.primary },
+                {
+                  width: 72,
+                  height: 72,
+                  borderRadius: 36,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: recordingState.isRecording ? colors.destructive : colors.primary,
+                },
                 animatedRecordStyle,
               ]}
             >
@@ -223,128 +243,14 @@ export default function LiveTranscriptionScreen() {
           </View>
         </Pressable>
 
-        <ThemedText style={[styles.hint, { color: colors.mutedForeground }]}>
-          {recordingState.isRecording ? 'Tap to stop' : 'Tap to record'}
-        </ThemedText>
+        <Text className="text-sm text-muted-foreground">
+          {isProcessing
+            ? 'Processing...'
+            : recordingState.isRecording
+            ? 'Tap to stop'
+            : 'Tap to record'}
+        </Text>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
-  },
-  title: {
-    fontSize: 28,
-  },
-  demoBadge: {
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: Spacing.xs,
-    borderRadius: BorderRadius.sm,
-  },
-  demoText: {
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  transcriptContainer: {
-    flex: 1,
-  },
-  transcriptContent: {
-    padding: Spacing.lg,
-    gap: Spacing.md,
-  },
-  processingCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-    padding: Spacing.md,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-  },
-  processingText: {
-    fontSize: 14,
-  },
-  errorCard: {
-    padding: Spacing.md,
-    borderRadius: BorderRadius.lg,
-  },
-  errorText: {
-    fontSize: 14,
-  },
-  emptyState: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: Spacing['2xl'],
-  },
-  emptyText: {
-    fontSize: 16,
-    textAlign: 'center',
-  },
-  transcriptCard: {
-    padding: Spacing.md,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    gap: Spacing.sm,
-  },
-  transcriptText: {
-    fontSize: 16,
-    lineHeight: 24,
-  },
-  timestamp: {
-    fontSize: 12,
-  },
-  controlsContainer: {
-    alignItems: 'center',
-    paddingVertical: Spacing.xl,
-    paddingHorizontal: Spacing.lg,
-    gap: Spacing.md,
-  },
-  durationContainer: {
-    alignItems: 'center',
-    gap: Spacing.sm,
-    width: '100%',
-  },
-  meteringBar: {
-    width: '60%',
-    height: 4,
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  meteringFill: {
-    height: '100%',
-    borderRadius: 2,
-  },
-  duration: {
-    fontSize: 14,
-    fontVariant: ['tabular-nums'],
-  },
-  recordButtonContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  recordButtonPulse: {
-    position: 'absolute',
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-  },
-  recordButton: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  hint: {
-    fontSize: 14,
-  },
-});

@@ -1,27 +1,33 @@
 import { useState, useCallback } from 'react';
-import {
-  StyleSheet,
-  View,
-  ScrollView,
-  Pressable,
-  TextInput,
-  Alert,
-  ActivityIndicator,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { View, Text, ScrollView, TextInput, Alert, Pressable } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { router } from 'expo-router';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import { Key, Sparkles, Info, HelpCircle, Check, AlertCircle, User, LogOut } from 'lucide-react-native';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { useAuth } from '@/contexts/auth-context';
+import { GlassHeader, useTabBarHeight } from '@/components/ui/glass-header';
+import { Button } from '@/components/ui/button';
+import { Card, CardHeader, CardContent, CardFooter } from '@/components/ui/card';
+import { useAuthStore } from '@/stores/auth-store';
+import { useApiKeyStore } from '@/stores/api-key-store';
 import { GeminiService } from '@/services/gemini-service';
-import { Colors, Spacing, BorderRadius } from '@/constants/theme';
+import { Colors } from '@/constants/theme';
 import { Config } from '@/constants/config';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { cn } from '@/lib/utils';
 
 export default function SettingsScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
-  const { isDemoMode, isAuthenticated, apiKey, isEnvKey, setApiKey, clearApiKey, enterDemoMode, exitDemoMode } = useAuth();
+  const insets = useSafeAreaInsets();
+  const tabBarHeight = useTabBarHeight();
+
+  // User auth state
+  const { user, signOut: authSignOut, isLoading: isAuthLoading } = useAuthStore();
+
+  // API key state
+  const { isDemoMode, apiKey, isEnvKey, setApiKey, clearApiKey, enterDemoMode, exitDemoMode } = useApiKeyStore();
+  const isApiAuthenticated = isDemoMode || apiKey !== null;
 
   const [inputApiKey, setInputApiKey] = useState('');
   const [isValidating, setIsValidating] = useState(false);
@@ -45,7 +51,7 @@ export default function SettingsScreen() {
         return;
       }
 
-      await setApiKey(inputApiKey.trim());
+      setApiKey(inputApiKey.trim());
       setInputApiKey('');
       Alert.alert('Success', 'API key saved successfully');
     } catch (err) {
@@ -55,7 +61,7 @@ export default function SettingsScreen() {
     }
   }, [inputApiKey, setApiKey]);
 
-  const handleClearApiKey = useCallback(async () => {
+  const handleClearApiKey = useCallback(() => {
     Alert.alert(
       'Clear API Key',
       'Are you sure you want to remove your API key?',
@@ -64,301 +70,321 @@ export default function SettingsScreen() {
         {
           text: 'Clear',
           style: 'destructive',
-          onPress: async () => {
-            await clearApiKey();
+          onPress: () => {
+            clearApiKey();
           },
         },
       ]
     );
   }, [clearApiKey]);
 
-  const handleEnterDemoMode = useCallback(() => {
-    enterDemoMode();
-  }, [enterDemoMode]);
+  const handleSignOut = useCallback(async () => {
+    Alert.alert(
+      'Sign Out',
+      'Are you sure you want to sign out?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sign Out',
+          style: 'destructive',
+          onPress: async () => {
+            await authSignOut();
+            router.replace('/(auth)/login');
+          },
+        },
+      ]
+    );
+  }, [authSignOut]);
 
-  const handleExitDemoMode = useCallback(() => {
-    exitDemoMode();
-  }, [exitDemoMode]);
+  const headerHeight = insets.top + 60;
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <ThemedView style={styles.header}>
-        <ThemedText type="title" style={styles.title}>Settings</ThemedText>
-      </ThemedView>
+    <View className="flex-1 bg-background">
+      <GlassHeader title="Settings" />
 
       <ScrollView
-        style={styles.content}
-        contentContainerStyle={styles.contentContainer}
+        className="flex-1"
+        contentContainerStyle={{
+          paddingHorizontal: 24,
+          paddingTop: headerHeight + 16,
+          paddingBottom: tabBarHeight + 24,
+          gap: 16,
+        }}
       >
-        {/* Demo Mode Section */}
-        <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <ThemedText style={styles.sectionTitle}>Demo Mode</ThemedText>
-          <ThemedText style={[styles.sectionDescription, { color: colors.mutedForeground }]}>
-            Try the app without an API key. Uses simulated transcriptions.
-          </ThemedText>
+        {/* Account Section */}
+        {user && (
+          <Animated.View entering={FadeInDown.delay(0).duration(300)}>
+            <Card variant="outline" animated={false}>
+              <CardHeader>
+                <View className="flex-row items-center gap-2">
+                  <View className="w-10 h-10 rounded-full items-center justify-center bg-primary">
+                    <User size={20} color={colors.primaryForeground} />
+                  </View>
+                  <View className="flex-1">
+                    <Text className="text-base font-semibold text-foreground">{user.name}</Text>
+                    <Text className="text-xs text-muted-foreground mt-0.5">
+                      {user.email}
+                    </Text>
+                  </View>
+                </View>
+              </CardHeader>
+              <CardFooter>
+                <Button
+                  variant="outline"
+                  onPress={handleSignOut}
+                  loading={isAuthLoading}
+                  className="flex-1"
+                >
+                  <LogOut size={16} color={colors.foreground} />
+                  <Text className="ml-2">Sign Out</Text>
+                </Button>
+              </CardFooter>
+            </Card>
+          </Animated.View>
+        )}
 
-          {isDemoMode ? (
-            <View style={styles.demoActiveContainer}>
-              <View style={[styles.demoActiveBadge, { backgroundColor: colors.primary + '20' }]}>
-                <ThemedText style={[styles.demoActiveText, { color: colors.primary }]}>
-                  Demo Mode Active
-                </ThemedText>
+        {/* Sign In Prompt */}
+        {!user && (
+          <Animated.View entering={FadeInDown.delay(0).duration(300)}>
+            <Card variant="outline" animated={false}>
+              <CardHeader>
+                <View className="flex-row items-center gap-2">
+                  <View className="w-10 h-10 rounded-md items-center justify-center bg-muted">
+                    <User size={20} color={colors.mutedForeground} />
+                  </View>
+                  <View className="flex-1">
+                    <Text className="text-base font-semibold text-foreground">Account</Text>
+                    <Text className="text-xs text-muted-foreground mt-0.5">
+                      Sign in to sync your data
+                    </Text>
+                  </View>
+                </View>
+              </CardHeader>
+              <CardFooter>
+                <Button onPress={() => router.push('/(auth)/login')} className="flex-1">
+                  Sign In
+                </Button>
+              </CardFooter>
+            </Card>
+          </Animated.View>
+        )}
+
+        {/* Demo Mode Section */}
+        <Animated.View entering={FadeInDown.delay(100).duration(300)}>
+          <Card variant="outline" animated={false}>
+            <CardHeader>
+              <View className="flex-row items-center gap-2">
+                <View className="w-10 h-10 rounded-md items-center justify-center bg-primary/15">
+                  <Sparkles size={20} color={colors.primary} />
+                </View>
+                <View className="flex-1">
+                  <Text className="text-base font-semibold text-foreground">Demo Mode</Text>
+                  <Text className="text-xs text-muted-foreground mt-0.5">
+                    Try the app without an API key
+                  </Text>
+                </View>
               </View>
-              <Pressable
-                onPress={handleExitDemoMode}
-                style={[styles.button, { backgroundColor: colors.muted }]}
-              >
-                <ThemedText style={[styles.buttonText, { color: colors.text }]}>
+            </CardHeader>
+            <CardContent>
+              {isDemoMode ? (
+                <View className="gap-1">
+                  <View className="flex-row items-center self-start px-2 py-1 rounded-sm gap-1 bg-primary/20">
+                    <Check size={14} color={colors.primary} />
+                    <Text className="text-xs font-semibold text-primary">
+                      Demo Mode Active
+                    </Text>
+                  </View>
+                  <Text className="text-xs text-muted-foreground mt-1">
+                    Using simulated transcriptions
+                  </Text>
+                </View>
+              ) : (
+                <Text className="text-sm text-muted-foreground leading-5">
+                  Experience the app with simulated transcriptions. No API key required.
+                </Text>
+              )}
+            </CardContent>
+            <CardFooter>
+              {isDemoMode ? (
+                <Button variant="outline" onPress={exitDemoMode} className="flex-1">
                   Exit Demo Mode
-                </ThemedText>
-              </Pressable>
-            </View>
-          ) : (
-            <Pressable
-              onPress={handleEnterDemoMode}
-              style={[styles.button, { backgroundColor: colors.primary }]}
-            >
-              <ThemedText style={[styles.buttonText, { color: colors.primaryForeground }]}>
-                Enter Demo Mode
-              </ThemedText>
-            </Pressable>
-          )}
-        </View>
+                </Button>
+              ) : (
+                <Button onPress={enterDemoMode} className="flex-1">
+                  Enter Demo Mode
+                </Button>
+              )}
+            </CardFooter>
+          </Card>
+        </Animated.View>
 
         {/* API Key Section */}
-        <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <ThemedText style={styles.sectionTitle}>Gemini API Key</ThemedText>
-          <ThemedText style={[styles.sectionDescription, { color: colors.mutedForeground }]}>
-            Connect your Gemini API key for real transcriptions using Gemini Flash 2.5.
-          </ThemedText>
-
-          {apiKey ? (
-            <View style={styles.apiKeyConnectedContainer}>
-              <View style={[styles.connectedBadge, { backgroundColor: colors.secondary + '20' }]}>
-                <View style={[styles.connectedDot, { backgroundColor: colors.secondary }]} />
-                <ThemedText style={[styles.connectedText, { color: colors.secondary }]}>
-                  {isEnvKey ? 'Using Environment Variable' : 'API Key Connected'}
-                </ThemedText>
+        <Animated.View entering={FadeInDown.delay(200).duration(300)}>
+          <Card variant="outline" animated={false}>
+            <CardHeader>
+              <View className="flex-row items-center gap-2">
+                <View className="w-10 h-10 rounded-md items-center justify-center bg-secondary/15">
+                  <Key size={20} color={colors.secondary} />
+                </View>
+                <View className="flex-1">
+                  <Text className="text-base font-semibold text-foreground">Gemini API Key</Text>
+                  <Text className="text-xs text-muted-foreground mt-0.5">
+                    Connect for real transcriptions
+                  </Text>
+                </View>
               </View>
-              <ThemedText style={[styles.apiKeyPreview, { color: colors.mutedForeground }]}>
-                {isEnvKey ? 'EXPO_PUBLIC_GEMINI_API_KEY' : `${apiKey.substring(0, 8)}...${apiKey.substring(apiKey.length - 4)}`}
-              </ThemedText>
-              {!isEnvKey && (
-                <Pressable
-                  onPress={handleClearApiKey}
-                  style={[styles.button, { backgroundColor: colors.destructive + '15' }]}
-                >
-                  <ThemedText style={[styles.buttonText, { color: colors.destructive }]}>
+            </CardHeader>
+            <CardContent>
+              {apiKey ? (
+                <View className="gap-2">
+                  <View className="flex-row items-center self-start px-2 py-1 rounded-sm gap-1 bg-secondary/20">
+                    <Check size={14} color={colors.secondary} />
+                    <Text className="text-xs font-semibold text-secondary">
+                      {isEnvKey ? 'Environment Variable' : 'API Key Connected'}
+                    </Text>
+                  </View>
+                  <Text className="text-xs text-muted-foreground font-mono">
+                    {isEnvKey ? 'EXPO_PUBLIC_GEMINI_API_KEY' : `${apiKey.substring(0, 8)}...${apiKey.substring(apiKey.length - 4)}`}
+                  </Text>
+                </View>
+              ) : (
+                <View className="gap-2">
+                  <TextInput
+                    className={cn(
+                      'rounded-md border p-2 text-sm text-foreground bg-muted',
+                      error ? 'border-destructive' : 'border-border'
+                    )}
+                    placeholder="Enter your Gemini API key"
+                    placeholderTextColor={colors.mutedForeground}
+                    value={inputApiKey}
+                    onChangeText={(text) => {
+                      setInputApiKey(text);
+                      setError(null);
+                    }}
+                    secureTextEntry
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                  />
+                  {error && (
+                    <Animated.View
+                      entering={FadeIn.duration(200)}
+                      className="flex-row items-center gap-1"
+                    >
+                      <AlertCircle size={14} color={colors.destructive} />
+                      <Text className="text-xs text-destructive flex-1">{error}</Text>
+                    </Animated.View>
+                  )}
+                </View>
+              )}
+            </CardContent>
+            <CardFooter>
+              {apiKey ? (
+                !isEnvKey && (
+                  <Button variant="destructive" onPress={handleClearApiKey} className="flex-1">
                     Remove API Key
-                  </ThemedText>
-                </Pressable>
+                  </Button>
+                )
+              ) : (
+                <Button
+                  onPress={handleSaveApiKey}
+                  loading={isValidating}
+                  disabled={!inputApiKey.trim()}
+                  className="flex-1"
+                >
+                  Save API Key
+                </Button>
               )}
-            </View>
-          ) : (
-            <View style={styles.apiKeyInputContainer}>
-              <TextInput
-                style={[
-                  styles.apiKeyInput,
-                  {
-                    backgroundColor: colors.muted,
-                    color: colors.text,
-                    borderColor: error ? colors.destructive : colors.border,
-                  },
-                ]}
-                placeholder="Enter your Gemini API key"
-                placeholderTextColor={colors.mutedForeground}
-                value={inputApiKey}
-                onChangeText={(text) => {
-                  setInputApiKey(text);
-                  setError(null);
-                }}
-                secureTextEntry
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-              {error && (
-                <ThemedText style={[styles.errorText, { color: colors.destructive }]}>
-                  {error}
-                </ThemedText>
-              )}
-              <Pressable
-                onPress={handleSaveApiKey}
-                disabled={isValidating || !inputApiKey.trim()}
-                style={[
-                  styles.button,
-                  {
-                    backgroundColor: isValidating || !inputApiKey.trim()
-                      ? colors.muted
-                      : colors.primary,
-                  },
-                ]}
-              >
-                {isValidating ? (
-                  <ActivityIndicator color={colors.mutedForeground} size="small" />
-                ) : (
-                  <ThemedText
-                    style={[
-                      styles.buttonText,
-                      {
-                        color: !inputApiKey.trim()
-                          ? colors.mutedForeground
-                          : colors.primaryForeground,
-                      },
-                    ]}
-                  >
-                    Save API Key
-                  </ThemedText>
-                )}
-              </Pressable>
-            </View>
-          )}
-        </View>
+            </CardFooter>
+          </Card>
+        </Animated.View>
 
         {/* About Section */}
-        <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <ThemedText style={styles.sectionTitle}>About</ThemedText>
-          <View style={styles.aboutRow}>
-            <ThemedText style={[styles.aboutLabel, { color: colors.mutedForeground }]}>
-              Version
-            </ThemedText>
-            <ThemedText>1.0.0</ThemedText>
-          </View>
-          <View style={styles.aboutRow}>
-            <ThemedText style={[styles.aboutLabel, { color: colors.mutedForeground }]}>
-              Model
-            </ThemedText>
-            <ThemedText>{Config.gemini.model}</ThemedText>
-          </View>
-          <View style={styles.aboutRow}>
-            <ThemedText style={[styles.aboutLabel, { color: colors.mutedForeground }]}>
-              Status
-            </ThemedText>
-            <ThemedText>
-              {isDemoMode ? 'Demo Mode' : isAuthenticated ? 'Connected' : 'Not Connected'}
-            </ThemedText>
-          </View>
-        </View>
+        <Animated.View entering={FadeInDown.delay(300).duration(300)}>
+          <Card variant="outline" animated={false}>
+            <CardHeader>
+              <View className="flex-row items-center gap-2">
+                <View className="w-10 h-10 rounded-md items-center justify-center bg-muted">
+                  <Info size={20} color={colors.mutedForeground} />
+                </View>
+                <View className="flex-1">
+                  <Text className="text-base font-semibold text-foreground">About</Text>
+                  <Text className="text-xs text-muted-foreground mt-0.5">
+                    App information
+                  </Text>
+                </View>
+              </View>
+            </CardHeader>
+            <CardContent>
+              <View>
+                <View className="flex-row justify-between items-center py-2 border-b border-border">
+                  <Text className="text-sm text-muted-foreground">Version</Text>
+                  <Text className="text-sm font-medium text-foreground">1.0.0</Text>
+                </View>
+                <View className="flex-row justify-between items-center py-2 border-b border-border">
+                  <Text className="text-sm text-muted-foreground">Model</Text>
+                  <Text className="text-sm font-medium text-foreground">{Config.gemini.model}</Text>
+                </View>
+                <View className="flex-row justify-between items-center py-2">
+                  <Text className="text-sm text-muted-foreground">Status</Text>
+                  <View className={cn(
+                    'flex-row items-center px-2 py-1 rounded-sm gap-1',
+                    isDemoMode ? 'bg-primary/20' : isApiAuthenticated ? 'bg-secondary/20' : 'bg-muted'
+                  )}>
+                    <View className={cn(
+                      'w-2 h-2 rounded-full',
+                      isDemoMode ? 'bg-primary' : isApiAuthenticated ? 'bg-secondary' : 'bg-muted-foreground'
+                    )} />
+                    <Text className={cn(
+                      'text-xs font-medium',
+                      isDemoMode ? 'text-primary' : isApiAuthenticated ? 'text-secondary' : 'text-muted-foreground'
+                    )}>
+                      {isDemoMode ? 'Demo' : isApiAuthenticated ? 'Connected' : 'Not Connected'}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+            </CardContent>
+          </Card>
+        </Animated.View>
 
         {/* Help Section */}
-        <View style={[styles.section, { backgroundColor: colors.card, borderColor: colors.border }]}>
-          <ThemedText style={styles.sectionTitle}>Getting Started</ThemedText>
-          <ThemedText style={[styles.helpText, { color: colors.mutedForeground }]}>
-            1. Get your API key from Google AI Studio{'\n'}
-            2. Enter your API key above{'\n'}
-            3. Use the Live tab for quick transcriptions{'\n'}
-            4. Use the Record tab to save and transcribe later{'\n'}
-            5. Add context in the Record tab for better accuracy
-          </ThemedText>
-        </View>
+        <Animated.View entering={FadeInDown.delay(400).duration(300)}>
+          <Card variant="outline" animated={false}>
+            <CardHeader>
+              <View className="flex-row items-center gap-2">
+                <View className="w-10 h-10 rounded-md items-center justify-center bg-muted">
+                  <HelpCircle size={20} color={colors.mutedForeground} />
+                </View>
+                <View className="flex-1">
+                  <Text className="text-base font-semibold text-foreground">Getting Started</Text>
+                  <Text className="text-xs text-muted-foreground mt-0.5">
+                    Quick guide
+                  </Text>
+                </View>
+              </View>
+            </CardHeader>
+            <CardContent>
+              <View className="gap-2">
+                {[
+                  'Get your API key from Google AI Studio',
+                  'Enter your API key above',
+                  'Use Live tab for quick transcriptions',
+                  'Use Record tab for fine-tuned context',
+                ].map((text, index) => (
+                  <View key={index} className="flex-row items-start gap-2">
+                    <View className="w-6 h-6 rounded-full items-center justify-center bg-primary/15">
+                      <Text className="text-xs font-semibold text-primary">{index + 1}</Text>
+                    </View>
+                    <Text className="flex-1 text-sm text-muted-foreground leading-5 pt-0.5">
+                      {text}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            </CardContent>
+          </Card>
+        </Animated.View>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  header: {
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
-  },
-  title: {
-    fontSize: 28,
-  },
-  content: {
-    flex: 1,
-  },
-  contentContainer: {
-    padding: Spacing.lg,
-    gap: Spacing.md,
-  },
-  section: {
-    padding: Spacing.md,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    gap: Spacing.sm,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-  },
-  sectionDescription: {
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  demoActiveContainer: {
-    gap: Spacing.sm,
-  },
-  demoActiveBadge: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: Spacing.xs,
-    borderRadius: BorderRadius.sm,
-  },
-  demoActiveText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  button: {
-    padding: Spacing.sm,
-    borderRadius: BorderRadius.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 44,
-  },
-  buttonText: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  apiKeyConnectedContainer: {
-    gap: Spacing.sm,
-  },
-  connectedBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: Spacing.xs,
-    borderRadius: BorderRadius.sm,
-    gap: Spacing.xs,
-  },
-  connectedDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  connectedText: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  apiKeyPreview: {
-    fontSize: 12,
-    fontFamily: 'monospace',
-  },
-  apiKeyInputContainer: {
-    gap: Spacing.sm,
-  },
-  apiKeyInput: {
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-    padding: Spacing.sm,
-    fontSize: 14,
-  },
-  errorText: {
-    fontSize: 12,
-  },
-  aboutRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: Spacing.xs,
-  },
-  aboutLabel: {
-    fontSize: 14,
-  },
-  helpText: {
-    fontSize: 14,
-    lineHeight: 22,
-  },
-});

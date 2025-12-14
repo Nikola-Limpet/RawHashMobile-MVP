@@ -1,50 +1,198 @@
-# Welcome to your Expo app 👋
+# RawHash
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A React Native voice transcription app built with Expo SDK 54. Record audio, upload files, and get AI-powered transcriptions using Google's Gemini Flash 2.5 API.
 
-## Get started
+## Features
 
-1. Install dependencies
+- **Live Transcription**: Quick voice-to-text with one tap
+- **Record & Process**: Record audio with fine-tuned context for better accuracy
+- **Multiple Processing Modes**:
+  - Raw transcription
+  - Clean/formatted text
+  - Summary generation
+  - Key points extraction
+  - Professional formatting
+  - Concise output
+- **File Upload**: Import and transcribe existing audio files
+- **Demo Mode**: Try the app without an API key
+- **User Authentication**: Sign up/sign in with Better Auth
+- **Secure Storage**: API keys stored securely with expo-secure-store
 
-   ```bash
-   npm install
-   ```
+## Tech Stack
 
-2. Start the app
+- **Framework**: [Expo](https://expo.dev) SDK 54 with React Native
+- **Routing**: [Expo Router](https://docs.expo.dev/router/introduction/) v4
+- **Styling**: [NativeWind](https://www.nativewind.dev/) v4 (Tailwind CSS for React Native)
+- **State Management**: [Zustand](https://zustand-demo.pmnd.rs/)
+- **Authentication**: [Better Auth](https://www.better-auth.com/) with Expo integration
+- **Database**: PostgreSQL with [Drizzle ORM](https://orm.drizzle.team/) (Docker)
+- **AI**: Google Gemini Flash 2.5 API
+- **Animations**: [React Native Reanimated](https://docs.swmansion.com/react-native-reanimated/)
+- **Icons**: [Lucide React Native](https://lucide.dev/)
 
-   ```bash
-   npx expo start
-   ```
+## Getting Started
 
-In the output, you'll find options to open the app in a
+### Prerequisites
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+- Node.js 18+ or Bun
+- Docker & Docker Compose
+- Expo CLI
+- iOS Simulator / Android Emulator / Physical Device
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+### Installation
 
-## Get a fresh project
-
-When you're ready, run:
-
+1. Clone the repository:
 ```bash
-npm run reset-project
+git clone https://github.com/yuujin/rawhash.git
+cd rawhash
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+2. Install dependencies:
+```bash
+bun install
+```
 
-## Learn more
+3. Set up environment variables:
+```bash
+cp .env.example .env
+```
 
-To learn more about developing your project with Expo, look at the following resources:
+Edit `.env` and add your Gemini API key:
+```
+EXPO_PUBLIC_GEMINI_API_KEY=your_api_key_here
+```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+4. Start the PostgreSQL database:
+```bash
+docker compose up -d
+```
 
-## Join the community
+5. Run database migrations:
+```bash
+bun drizzle-kit push
+```
 
-Join our community of developers creating universal apps.
+6. Start the development server:
+```bash
+bun start
+```
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+### Running on Device
+
+- **iOS Simulator**: Press `i`
+- **Android Emulator**: Press `a`
+- **Physical Device**: Scan QR code with Expo Go app
+
+## Project Structure
+
+```
+rawhash/
+├── app/                    # Expo Router screens
+│   ├── (auth)/            # Authentication screens
+│   │   ├── login.tsx
+│   │   └── signup.tsx
+│   ├── (tabs)/            # Main tab navigation
+│   │   ├── index.tsx      # Live transcription
+│   │   ├── record.tsx     # Record & process
+│   │   └── settings.tsx   # Settings & API key
+│   └── api/               # Expo API Routes
+│       └── auth/          # Better Auth endpoints
+├── components/            # Reusable UI components
+│   └── ui/               # Base UI components
+├── lib/                   # Core libraries
+│   ├── auth.ts           # Better Auth server config
+│   ├── auth-client.ts    # Better Auth client
+│   ├── db.ts             # Database connection
+│   └── schema.ts         # Drizzle schema
+├── stores/               # Zustand stores
+│   ├── auth-store.ts     # User authentication state
+│   └── api-key-store.ts  # Gemini API key state
+├── services/             # API services
+│   ├── audio-service.ts  # Audio recording
+│   └── gemini-service.ts # Gemini API integration
+├── constants/            # App constants & theme
+└── hooks/               # Custom React hooks
+```
+
+## Configuration
+
+### Gemini API Key
+
+Get your API key from [Google AI Studio](https://aistudio.google.com/apikey).
+
+You can either:
+1. Set it in `.env` as `EXPO_PUBLIC_GEMINI_API_KEY`
+2. Enter it in the Settings screen within the app
+
+### App Scheme
+
+The app uses `rawhash://` as its deep link scheme. This is configured in `app.json`.
+
+## Development
+
+### TypeScript
+
+Check types:
+```bash
+npx tsc --noEmit
+```
+
+### Database
+
+The app uses PostgreSQL running in Docker (port 5433 to avoid conflicts with existing PostgreSQL instances).
+
+Start database:
+```bash
+docker compose up -d
+```
+
+Stop database:
+```bash
+docker compose down
+```
+
+View database logs:
+```bash
+docker compose logs -f postgres
+```
+
+Generate migrations:
+```bash
+bun drizzle-kit generate
+```
+
+Push changes:
+```bash
+bun drizzle-kit push
+```
+
+### Clear Cache
+
+```bash
+bun start --clear
+```
+
+## API Reference
+
+### Processing Modes
+
+| Mode | Description |
+|------|-------------|
+| `raw` | Direct transcription without modification |
+| `clean` | Remove filler words, fix grammar |
+| `summary` | Generate a brief summary |
+| `keypoints` | Extract key points as bullet list |
+| `professional` | Format for professional use |
+| `concise` | Compress while keeping meaning |
+
+## License
+
+MIT License - see [LICENSE](LICENSE) for details.
+
+## Author
+
+**Yuujin**
+
+---
+
+Built with Expo and React Native

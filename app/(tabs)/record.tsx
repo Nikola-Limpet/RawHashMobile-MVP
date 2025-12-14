@@ -1,13 +1,6 @@
 import { useState, useCallback } from 'react';
-import {
-  StyleSheet,
-  View,
-  ScrollView,
-  Pressable,
-  TextInput,
-  ActivityIndicator,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { View, Text, ScrollView, Pressable, TextInput } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -15,17 +8,29 @@ import Animated, {
   withRepeat,
   withTiming,
   cancelAnimation,
+  FadeIn,
+  FadeOut,
+  FadeInDown,
 } from 'react-native-reanimated';
 import * as DocumentPicker from 'expo-document-picker';
-import { Upload, Trash2, Play, Pause, Mic, Square } from 'lucide-react-native';
+import { Upload, Trash2, Play, Pause, Mic, Square, X, FileAudio } from 'lucide-react-native';
 
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
+import { GlassHeader, useTabBarHeight } from '@/components/ui/glass-header';
+import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/ui/empty-state';
+import { SkeletonRecording } from '@/components/ui/skeleton';
+import { ProcessingModeSelector, ProcessingResultView } from '@/components/ui/processing-mode-selector';
 import { useAudioRecording, formatDuration, normalizeMetering } from '@/services/audio-service';
-import { GeminiService, getDemoTranscription, getMimeType } from '@/services/gemini-service';
-import { useAuth } from '@/contexts/auth-context';
-import { Colors, Spacing, BorderRadius } from '@/constants/theme';
+import {
+  GeminiService,
+  getDemoProcessedResult,
+  getMimeType,
+  ProcessingMode,
+} from '@/services/gemini-service';
+import { useApiKeyStore } from '@/stores/api-key-store';
+import { Colors } from '@/constants/theme';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { cn } from '@/lib/utils';
 
 interface Recording {
   id: string;
@@ -36,12 +41,21 @@ interface Recording {
   timestamp: Date;
   name?: string;
   mimeType?: string;
+  processedResult?: {
+    original: string;
+    processed: string;
+    summary?: string;
+    keyPoints?: string[];
+  };
+  processingMode?: ProcessingMode;
 }
 
 export default function RecordTranscribeScreen() {
   const colorScheme = useColorScheme() ?? 'light';
   const colors = Colors[colorScheme];
-  const { isDemoMode, apiKey } = useAuth();
+  const insets = useSafeAreaInsets();
+  const tabBarHeight = useTabBarHeight();
+  const { isDemoMode, apiKey } = useApiKeyStore();
 
   const {
     recordingState,
@@ -54,6 +68,7 @@ export default function RecordTranscribeScreen() {
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [context, setContext] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [selectedMode, setSelectedMode] = useState<ProcessingMode>('raw');
 
   // Animation values
   const recordingScale = useSharedValue(1);
@@ -110,45 +125,62 @@ export default function RecordTranscribeScreen() {
     }
   }, [stopRecording, recordingState.duration, pulseOpacity, recordingScale]);
 
-  const handleTranscribe = useCallback(async (recordingId: string) => {
+  const handleTranscribe = useCallback(async (recordingId: string, mode: ProcessingMode = selectedMode) => {
     const recording = recordings.find((r) => r.id === recordingId);
     if (!recording) return;
 
     setRecordings((prev) =>
       prev.map((r) =>
-        r.id === recordingId ? { ...r, isTranscribing: true } : r
+        r.id === recordingId ? { ...r, isTranscribing: true, processingMode: mode } : r
       )
     );
 
     try {
-      let transcription;
-
       if (isDemoMode) {
         await new Promise((resolve) => setTimeout(resolve, 2000));
-        transcription = getDemoTranscription();
+        const result = getDemoProcessedResult(mode);
+        setRecordings((prev) =>
+          prev.map((r) =>
+            r.id === recordingId
+              ? {
+                  ...r,
+                  transcript: result.processed,
+                  processedResult: result,
+                  processingMode: mode,
+                  isTranscribing: false,
+                }
+              : r
+          )
+        );
       } else if (apiKey) {
         const geminiService = new GeminiService(apiKey);
         const mimeType = recording.mimeType || 'audio/wav';
-        if (context.trim()) {
-          transcription = await geminiService.transcribeWithContext(
-            recording.uri,
-            context.trim(),
-            mimeType
-          );
-        } else {
-          transcription = await geminiService.transcribeAudio(recording.uri, mimeType);
-        }
+
+        const result = await geminiService.transcribeAndProcess(
+          recording.uri,
+          {
+            mode,
+            context: context.trim() || undefined,
+          },
+          mimeType
+        );
+
+        setRecordings((prev) =>
+          prev.map((r) =>
+            r.id === recordingId
+              ? {
+                  ...r,
+                  transcript: result.processed,
+                  processedResult: result,
+                  processingMode: mode,
+                  isTranscribing: false,
+                }
+              : r
+          )
+        );
       } else {
         throw new Error('No API key configured');
       }
-
-      setRecordings((prev) =>
-        prev.map((r) =>
-          r.id === recordingId
-            ? { ...r, transcript: transcription.text, isTranscribing: false }
-            : r
-        )
-      );
     } catch (err) {
       setRecordings((prev) =>
         prev.map((r) =>
@@ -157,7 +189,7 @@ export default function RecordTranscribeScreen() {
       );
       setError(err instanceof Error ? err.message : 'Failed to transcribe');
     }
-  }, [recordings, isDemoMode, apiKey, context]);
+  }, [recordings, isDemoMode, apiKey, context, selectedMode]);
 
   const handleDeleteRecording = useCallback((recordingId: string) => {
     setRecordings((prev) => prev.filter((r) => r.id !== recordingId));
@@ -181,7 +213,7 @@ export default function RecordTranscribeScreen() {
       const newRecording: Recording = {
         id: Date.now().toString(),
         uri: file.uri,
-        duration: 0, // Unknown for uploaded files
+        duration: 0,
         transcript: null,
         isTranscribing: false,
         timestamp: new Date(),
@@ -195,168 +227,246 @@ export default function RecordTranscribeScreen() {
     }
   }, []);
 
+  const handleDismissError = useCallback(() => {
+    setError(null);
+  }, []);
+
   const metering = normalizeMetering(recordingState.metering);
+  const headerHeight = insets.top + 60;
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <ThemedView style={styles.header}>
-        <ThemedText type="title" style={styles.title}>Record</ThemedText>
-        {isDemoMode && (
-          <View style={[styles.demoBadge, { backgroundColor: colors.muted }]}>
-            <ThemedText style={[styles.demoText, { color: colors.mutedForeground }]}>
-              Demo
-            </ThemedText>
-          </View>
-        )}
-      </ThemedView>
-
-      <View style={[styles.contextContainer, { borderBottomColor: colors.border }]}>
-        <ThemedText style={[styles.contextLabel, { color: colors.mutedForeground }]}>
-          Fine-tune Context (optional)
-        </ThemedText>
-        <TextInput
-          style={[
-            styles.contextInput,
-            {
-              backgroundColor: colors.muted,
-              color: colors.text,
-              borderColor: colors.border,
-            },
-          ]}
-          placeholder="e.g., Medical terminology, Technical jargon, Specific names..."
-          placeholderTextColor={colors.mutedForeground}
-          value={context}
-          onChangeText={setContext}
-          multiline
-          numberOfLines={2}
-        />
-      </View>
+    <View className="flex-1 bg-background">
+      <GlassHeader
+        title="Record"
+        rightElement={
+          isDemoMode ? (
+            <View className="px-2 py-1 rounded-sm bg-muted">
+              <Text className="text-xs font-medium text-muted-foreground">Demo</Text>
+            </View>
+          ) : null
+        }
+      />
 
       <ScrollView
-        style={styles.recordingsContainer}
-        contentContainerStyle={styles.recordingsContent}
+        className="flex-1"
+        contentContainerStyle={{
+          paddingHorizontal: 24,
+          paddingTop: headerHeight + 16,
+          paddingBottom: tabBarHeight + 140,
+          gap: 16,
+          ...(recordings.length === 0 && !recordingState.isRecording ? { flex: 1 } : {}),
+        }}
       >
+        {/* Processing Mode Selector */}
+        <ProcessingModeSelector
+          selected={selectedMode}
+          onSelect={setSelectedMode}
+        />
+
+        {/* Context Input */}
+        <View className="mb-4">
+          <Text className="text-xs text-muted-foreground mb-1">
+            Fine-tune Context (optional)
+          </Text>
+          <TextInput
+            className={cn(
+              'rounded-md border p-2 text-sm min-h-[60px] bg-muted',
+              error ? 'border-destructive' : 'border-border'
+            )}
+            style={{ color: colors.foreground, textAlignVertical: 'top' }}
+            placeholder="e.g., Medical terminology, Technical jargon, Specific names..."
+            placeholderTextColor={colors.mutedForeground}
+            value={context}
+            onChangeText={setContext}
+            multiline
+            numberOfLines={2}
+          />
+        </View>
+
         {error && (
-          <View style={[styles.errorCard, { backgroundColor: colors.destructive + '15' }]}>
-            <ThemedText style={[styles.errorText, { color: colors.destructive }]}>
-              {error}
-            </ThemedText>
-          </View>
-        )}
-
-        {recordings.length === 0 && !recordingState.isRecording && (
-          <View style={styles.emptyState}>
-            <ThemedText style={[styles.emptyText, { color: colors.mutedForeground }]}>
-              Record audio or upload files to transcribe
-            </ThemedText>
-          </View>
-        )}
-
-        {recordings.map((recording) => (
-          <View
-            key={recording.id}
-            style={[styles.recordingCard, { backgroundColor: colors.card, borderColor: colors.border }]}
+          <Animated.View
+            entering={FadeIn.duration(200)}
+            exiting={FadeOut.duration(200)}
+            className="flex-row items-center justify-between p-4 rounded-lg bg-destructive/15"
           >
-            <View style={styles.recordingHeader}>
-              <View style={styles.recordingInfo}>
-                <ThemedText style={styles.recordingTitle} numberOfLines={1}>
-                  {recording.name || `Recording ${recording.timestamp.toLocaleTimeString()}`}
-                </ThemedText>
-                <ThemedText style={[styles.recordingDuration, { color: colors.mutedForeground }]}>
-                  {recording.name ? recording.timestamp.toLocaleTimeString() : `Duration: ${formatDuration(recording.duration)}`}
-                </ThemedText>
+            <Text className="text-sm text-destructive flex-1 mr-2">{error}</Text>
+            <Pressable onPress={handleDismissError} hitSlop={8}>
+              <X size={18} color={colors.destructive} />
+            </Pressable>
+          </Animated.View>
+        )}
+
+        {recordings.length === 0 && !recordingState.isRecording && !error && (
+          <EmptyState
+            icon="audio"
+            title="No recordings yet"
+            description="Record audio or upload files to transcribe with fine-tuned context"
+            actionLabel="Upload Audio"
+            onAction={handleUploadAudio}
+          />
+        )}
+
+        {recordings.map((recording, index) => (
+          <Animated.View
+            key={recording.id}
+            entering={FadeInDown.delay(index * 50).duration(300)}
+            exiting={FadeOut.duration(200)}
+            className="p-4 rounded-lg border border-border bg-card gap-4"
+          >
+            <View className="flex-row justify-between items-start">
+              <View className="flex-1 mr-2">
+                <View className="flex-row items-center">
+                  {recording.name && (
+                    <FileAudio size={16} color={colors.mutedForeground} style={{ marginRight: 4 }} />
+                  )}
+                  <Text className="text-base font-semibold text-foreground flex-1" numberOfLines={1}>
+                    {recording.name || `Recording ${recording.timestamp.toLocaleTimeString()}`}
+                  </Text>
+                </View>
+                <Text className="text-xs text-muted-foreground mt-0.5">
+                  {recording.name
+                    ? recording.timestamp.toLocaleTimeString()
+                    : `Duration: ${formatDuration(recording.duration)}`}
+                </Text>
               </View>
               <Pressable
                 onPress={() => handleDeleteRecording(recording.id)}
-                style={[styles.deleteButton, { backgroundColor: colors.destructive + '15' }]}
+                className="p-2 rounded-sm bg-destructive/15"
               >
                 <Trash2 size={16} color={colors.destructive} />
               </Pressable>
             </View>
 
-            {recording.transcript ? (
-              <View style={[styles.transcriptBox, { backgroundColor: colors.muted }]}>
-                <ThemedText style={styles.transcriptText}>
-                  {recording.transcript}
-                </ThemedText>
+            {recording.processedResult ? (
+              <View className="gap-4">
+                <ProcessingResultView
+                  mode={recording.processingMode || 'raw'}
+                  processed={recording.processedResult.processed}
+                  summary={recording.processedResult.summary}
+                  keyPoints={recording.processedResult.keyPoints}
+                  original={recording.processedResult.original}
+                  showOriginal={recording.processingMode !== 'raw' && recording.processedResult.original !== recording.processedResult.processed}
+                />
+                <View className="mt-1">
+                  <ProcessingModeSelector
+                    selected={recording.processingMode || 'raw'}
+                    onSelect={(mode) => handleTranscribe(recording.id, mode)}
+                    compact
+                  />
+                </View>
+              </View>
+            ) : recording.transcript ? (
+              <View className="gap-4">
+                <View className="p-2 rounded-md bg-muted">
+                  <Text className="text-sm leading-[22px] text-foreground">
+                    {recording.transcript}
+                  </Text>
+                </View>
+                <View className="mt-1">
+                  <ProcessingModeSelector
+                    selected={selectedMode}
+                    onSelect={(mode) => handleTranscribe(recording.id, mode)}
+                    compact
+                  />
+                </View>
               </View>
             ) : recording.isTranscribing ? (
-              <View style={styles.transcribingContainer}>
-                <ActivityIndicator color={colors.primary} size="small" />
-                <ThemedText style={[styles.transcribingText, { color: colors.mutedForeground }]}>
-                  Transcribing...
-                </ThemedText>
+              <View className="-mt-2 gap-2">
+                <SkeletonRecording count={1} />
+                <Text className="text-xs text-muted-foreground text-center capitalize">
+                  {recording.processingMode && recording.processingMode !== 'raw'
+                    ? `Processing: ${recording.processingMode}`
+                    : 'Transcribing...'}
+                </Text>
               </View>
             ) : (
-              <Pressable
-                onPress={() => handleTranscribe(recording.id)}
-                style={[styles.transcribeButton, { backgroundColor: colors.primary }]}
-              >
-                <ThemedText style={[styles.transcribeButtonText, { color: colors.primaryForeground }]}>
+              <View className="gap-2">
+                <Button
+                  onPress={() => handleTranscribe(recording.id)}
+                  variant="default"
+                  size="md"
+                  className="flex-1"
+                >
                   Transcribe
-                </ThemedText>
-              </Pressable>
+                </Button>
+              </View>
             )}
-          </View>
+          </Animated.View>
         ))}
       </ScrollView>
 
-      <View style={styles.controlsContainer}>
+      <View
+        className="absolute left-0 right-0 items-center py-6 px-6 gap-4"
+        style={{ bottom: tabBarHeight }}
+      >
         {recordingState.isRecording && (
-          <View style={styles.durationContainer}>
-            <View style={[styles.meteringBar, { backgroundColor: colors.muted }]}>
+          <Animated.View
+            entering={FadeIn.duration(200)}
+            className="items-center gap-2 w-full"
+          >
+            <View className="w-[60%] h-1 rounded-sm bg-muted overflow-hidden">
               <Animated.View
-                style={[
-                  styles.meteringFill,
-                  {
-                    backgroundColor: colors.secondary,
-                    width: `${metering * 100}%`,
-                  },
-                ]}
+                className="h-full rounded-sm bg-secondary"
+                style={{ width: `${metering * 100}%` }}
               />
             </View>
-            <ThemedText style={[styles.duration, { color: colors.mutedForeground }]}>
+            <Text className="text-sm text-muted-foreground tabular-nums">
               {formatDuration(recordingState.duration)}
-            </ThemedText>
-          </View>
+            </Text>
+          </Animated.View>
         )}
 
-        <View style={styles.buttonRow}>
+        <View className="flex-row items-center gap-6">
           {recordingState.isRecording ? (
-            <Pressable
+            <Button
+              variant="secondary"
+              size="icon"
               onPress={recordingState.isPaused ? resumeRecording : pauseRecording}
-              style={[styles.secondaryButton, { backgroundColor: colors.muted }]}
+              style={{ width: 48, height: 48 }}
             >
               {recordingState.isPaused ? (
-                <Play size={20} color={colors.text} />
+                <Play size={20} color={colors.secondaryForeground} />
               ) : (
-                <Pause size={20} color={colors.text} />
+                <Pause size={20} color={colors.secondaryForeground} />
               )}
-            </Pressable>
+            </Button>
           ) : (
-            <Pressable
+            <Button
+              variant="outline"
+              size="icon"
               onPress={handleUploadAudio}
-              style={[styles.secondaryButton, { backgroundColor: colors.muted }]}
+              style={{ width: 48, height: 48 }}
             >
-              <Upload size={20} color={colors.text} />
-            </Pressable>
+              <Upload size={20} color={colors.foreground} />
+            </Button>
           )}
 
           <Pressable
             onPress={recordingState.isRecording ? handleStopRecording : handleStartRecording}
           >
-            <View style={styles.recordButtonContainer}>
+            <View className="items-center justify-center">
               <Animated.View
                 style={[
-                  styles.recordButtonPulse,
-                  { backgroundColor: colors.secondary },
+                  {
+                    position: 'absolute',
+                    width: 88,
+                    height: 88,
+                    borderRadius: 44,
+                    backgroundColor: colors.secondary,
+                  },
                   animatedPulseStyle,
                 ]}
               />
               <Animated.View
                 style={[
-                  styles.recordButton,
-                  { backgroundColor: recordingState.isRecording ? colors.destructive : colors.secondary },
+                  {
+                    width: 72,
+                    height: 72,
+                    borderRadius: 36,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: recordingState.isRecording ? colors.destructive : colors.secondary,
+                  },
                   animatedRecordStyle,
                 ]}
               >
@@ -369,200 +479,17 @@ export default function RecordTranscribeScreen() {
             </View>
           </Pressable>
 
-          {recordingState.isRecording ? (
-            <View style={styles.secondaryButton} />
-          ) : (
-            <View style={styles.secondaryButton} />
-          )}
+          <View style={{ width: 48, height: 48 }} />
         </View>
 
-        <ThemedText style={[styles.hint, { color: colors.mutedForeground }]}>
+        <Text className="text-sm text-muted-foreground">
           {recordingState.isRecording
             ? recordingState.isPaused
               ? 'Paused'
               : 'Recording...'
             : 'Record or upload audio'}
-        </ThemedText>
+        </Text>
       </View>
-    </SafeAreaView>
+    </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.md,
-  },
-  title: {
-    fontSize: 28,
-  },
-  demoBadge: {
-    paddingHorizontal: Spacing.sm,
-    paddingVertical: Spacing.xs,
-    borderRadius: BorderRadius.sm,
-  },
-  demoText: {
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  contextContainer: {
-    paddingHorizontal: Spacing.lg,
-    paddingBottom: Spacing.md,
-    borderBottomWidth: 1,
-  },
-  contextLabel: {
-    fontSize: 12,
-    marginBottom: Spacing.xs,
-  },
-  contextInput: {
-    borderRadius: BorderRadius.md,
-    borderWidth: 1,
-    padding: Spacing.sm,
-    fontSize: 14,
-    minHeight: 60,
-    textAlignVertical: 'top',
-  },
-  recordingsContainer: {
-    flex: 1,
-  },
-  recordingsContent: {
-    padding: Spacing.lg,
-    gap: Spacing.md,
-  },
-  errorCard: {
-    padding: Spacing.md,
-    borderRadius: BorderRadius.lg,
-  },
-  errorText: {
-    fontSize: 14,
-  },
-  emptyState: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: Spacing['2xl'],
-  },
-  emptyText: {
-    fontSize: 16,
-    textAlign: 'center',
-  },
-  recordingCard: {
-    padding: Spacing.md,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    gap: Spacing.md,
-  },
-  recordingHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-  },
-  recordingInfo: {
-    flex: 1,
-    marginRight: Spacing.sm,
-  },
-  recordingTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  recordingDuration: {
-    fontSize: 12,
-    marginTop: 2,
-  },
-  deleteButton: {
-    padding: Spacing.sm,
-    borderRadius: BorderRadius.sm,
-  },
-  transcriptBox: {
-    padding: Spacing.sm,
-    borderRadius: BorderRadius.md,
-  },
-  transcriptText: {
-    fontSize: 14,
-    lineHeight: 22,
-  },
-  transcribingContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.sm,
-    padding: Spacing.sm,
-  },
-  transcribingText: {
-    fontSize: 14,
-  },
-  transcribeButton: {
-    padding: Spacing.sm,
-    borderRadius: BorderRadius.md,
-    alignItems: 'center',
-  },
-  transcribeButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  controlsContainer: {
-    alignItems: 'center',
-    paddingVertical: Spacing.lg,
-    paddingHorizontal: Spacing.lg,
-    gap: Spacing.md,
-  },
-  durationContainer: {
-    alignItems: 'center',
-    gap: Spacing.sm,
-    width: '100%',
-  },
-  meteringBar: {
-    width: '60%',
-    height: 4,
-    borderRadius: 2,
-    overflow: 'hidden',
-  },
-  meteringFill: {
-    height: '100%',
-    borderRadius: 2,
-  },
-  duration: {
-    fontSize: 14,
-    fontVariant: ['tabular-nums'],
-  },
-  buttonRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.lg,
-  },
-  secondaryButton: {
-    width: 80,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.md,
-    alignItems: 'center',
-  },
-  secondaryButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  recordButtonContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  recordButtonPulse: {
-    position: 'absolute',
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-  },
-  recordButton: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  hint: {
-    fontSize: 14,
-  },
-});

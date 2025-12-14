@@ -1,10 +1,12 @@
+import { useEffect } from 'react';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import 'react-native-reanimated';
+import '../global.css';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
-import { AuthProvider } from '@/contexts/auth-context';
+import { useAuthStore } from '@/stores/auth-store';
 import { Colors } from '@/constants/theme';
 
 export const unstable_settings = {
@@ -32,16 +34,21 @@ const createTheme = (colorScheme: 'light' | 'dark') => {
 export default function RootLayout() {
   const colorScheme = useColorScheme() ?? 'light';
   const theme = createTheme(colorScheme);
+  const refreshSession = useAuthStore((state) => state.refreshSession);
+
+  // Refresh session on app load
+  useEffect(() => {
+    refreshSession();
+  }, [refreshSession]);
 
   return (
-    <AuthProvider>
-      <ThemeProvider value={theme}>
-        <Stack>
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
-        </Stack>
-        <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
-      </ThemeProvider>
-    </AuthProvider>
+    <ThemeProvider value={theme}>
+      <Stack>
+        <Stack.Screen name="(auth)" options={{ headerShown: false }} />
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+      </Stack>
+      <StatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
+    </ThemeProvider>
   );
 }
